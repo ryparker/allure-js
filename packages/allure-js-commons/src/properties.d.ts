@@ -1,5 +1,5 @@
 declare module "properties" {
-  function stringify(obj: any, options?: Config): String;
+  function stringify(obj: any, options?: Config): string;
   function stringify(obj: any, options: Config, callback: Function): undefined ;
 
   class Config {

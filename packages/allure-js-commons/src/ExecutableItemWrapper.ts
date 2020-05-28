@@ -1,14 +1,16 @@
 import {
+  ContentType,
+  FixtureResult,
+  Stage,
+  Status,
   StatusDetails,
   StepResult,
-  FixtureResult,
-  TestResult,
-  Status,
-  Stage,
-  ContentType
+  TestResult
 } from "./model";
+
 import { isPromise } from "./isPromise";
 import { stepResult } from "./constructors";
+import stripAnsi from "strip-ansi";
 
 export class ExecutableItemWrapper {
   constructor(private readonly info: FixtureResult | TestResult) {
@@ -43,11 +45,11 @@ export class ExecutableItemWrapper {
   }
 
   public set detailsMessage(message: string) {
-    this.info.statusDetails.message = message;
+    this.info.statusDetails.message = stripAnsi(message);
   }
 
   public set detailsTrace(trace: string) {
-    this.info.statusDetails.trace = trace;
+    this.info.statusDetails.trace = stripAnsi(trace);
   }
 
   public set stage(stage: Stage) {

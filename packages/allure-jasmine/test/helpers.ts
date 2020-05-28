@@ -1,4 +1,5 @@
 import { Allure, InMemoryAllureWriter } from "allure-js-commons";
+
 import { JasmineAllureReporter } from "../src/JasmineAllureReporter";
 import Env = jasmine.Env;
 
@@ -34,6 +35,7 @@ export function delayFail(ms: number) {
 
 /*
 todo:
+strip ansi
 failing test +
 
 throwing test

@@ -11,8 +11,7 @@
     "clean": "rimraf ./dist ./out",
     "lint": "eslint ./src ./test ./index.ts --ext .ts",
     "lint-fix": "eslint ./src ./test ./index.ts --ext .ts --fix",
-    "compile": "tsc",
-    "build": "npm run lint && npm run compile",
+    "build": "tsc",
     "prepublishOnly": "npm run clean && npm run build",
     "generate-report": "allure generate ./out/allure-results -o ./out/allure-report --clean",
     "runTest": "jasmine ./dist/test/*.js",
@@ -21,10 +20,12 @@
   },
   "devDependencies": {
     "@types/jasmine": "^3.3.12",
-    "jasmine": "^3.4.0"
+    "jasmine": "^3.4.0",
+    "rimraf": "^3.0.2"
   },
   "dependencies": {
-    "allure-js-commons": "^2.0.0-beta.7"
+    "allure-js-commons": "^2.0.0-beta.7",
+    "strip-ansi": "^6.0.0"
   },
   "nyc": {
     "check-coverage": false,

@@ -1,17 +1,20 @@
 {
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "link": "lerna link --force-local",
-    "build": "npm run clean && npm run link && lerna run build --stream",
-    "test": "npm run build && npm run run-test",
+    "link": "lerna link ",
+    "build": "yarn clean && yarn link && yarn build --stream",
+    "test": "yarn build && yarn run-test",
     "clean": "lerna run clean",
     "version": "lerna version --no-git-tag-version --no-changelog --yes --yes",
     "release": "lerna publish from-package --no-git-reset --yes",
     "lint": "lerna run lint",
     "lint-fix": "lerna run lint-fix",
     "run-test": "lerna run test",
-    "prepare": "npm run bootstrap",
-    "bootstrap": "npm run pre-bootstrap && lerna bootstrap --hoist",
+    "prepare": "yarn bootstrap",
+    "bootstrap": "yarn pre-bootstrap && lerna bootstrap",
     "pre-bootstrap": "run-p pre-bootstrap:*",
     "pre-bootstrap:pkglock": "rimraf ./packages/*/package-lock.json",
     "pre-bootstrap:node_modules": "rimraf ./packages/*/node_modules",

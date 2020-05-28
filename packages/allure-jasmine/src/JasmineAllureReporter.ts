@@ -1,19 +1,22 @@
 import {
+  Allure,
   AllureGroup,
   AllureRuntime,
   AllureStep,
   AllureTest,
   ContentType,
   ExecutableItemWrapper,
-  isPromise,
+  IAllureConfig,
+  Label,
   LabelName,
   Stage,
   Status,
-  Allure,
   StepInterface,
-  Label,
-  IAllureConfig
+  isPromise
 } from "allure-js-commons";
+
+import stripAnsi from 'strip-ansi'
+
 import FailedExpectation = jasmine.FailedExpectation;
 
 enum SpecStatus {
@@ -149,8 +152,8 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     const exceptionInfo = this.findMessageAboutThrow(spec.failedExpectations)
       || this.findAnyError(spec.failedExpectations);
     if (exceptionInfo !== null) {
-      currentTest.detailsMessage = exceptionInfo.message;
-      currentTest.detailsTrace = exceptionInfo.stack;
+      currentTest.detailsMessage = stripAnsi(exceptionInfo.message);
+      currentTest.detailsTrace = stripAnsi(exceptionInfo.stack);
     }
 
     currentTest.endTest();
@@ -292,16 +295,20 @@ export class JasmineAllureInterface extends Allure {
     let result;
     try {
       result = wrappedStep.run(body);
+      console.log(result);
     } catch (err) {
+      console.log(err);
       wrappedStep.endStep();
       throw err;
     }
     if (isPromise(result)) {
       const promise = result as Promise<any>;
       return promise.then(a => {
+        console.log(a);
         wrappedStep.endStep();
         return a;
       }).catch(e => {
+        console.log(e);
         wrappedStep.endStep();
         throw e;
       });
@@ -312,6 +319,7 @@ export class JasmineAllureInterface extends Allure {
   }
 
   logStep(name: string, status?: Status): void {
+    console.log(status);
     this.step(name, () => {}); // todo status
   }
 
