@@ -1,6 +1,6 @@
 {
   "name": "allure-js-commons",
-  "version": "2.0.0-beta.6",
+  "version": "2.0.0-beta.7",
   "description": "Allure JS Commons",
   "license": "Apache-2.0",
   "author": "Ilya Korobitsyn <mail@korobochka.org>",
@@ -16,7 +16,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "devDependencies": {
-    "@types/mkdirp": "^0.5.2",
+    "@types/mkdirp": "^1.0.0",
     "@types/uuid": "^7.0.0"
   },
   "dependencies": {
