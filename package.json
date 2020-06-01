@@ -4,21 +4,16 @@
     "packages/*"
   ],
   "scripts": {
-    "link": "lerna link ",
-    "build": "yarn clean && yarn link && yarn build --stream",
-    "test": "yarn build && yarn run-test",
+    "bootstrap": "yarn bootstrap",
+    "link": "lerna link",
+    "build": "lerna run build --stream",
+    "test": "lerna run test",
     "clean": "lerna run clean",
-    "version": "lerna version --no-git-tag-version --no-changelog --yes --yes",
-    "release": "lerna publish from-package --no-git-reset --yes",
     "lint": "lerna run lint",
-    "lint-fix": "lerna run lint-fix",
-    "run-test": "lerna run test",
-    "prepare": "yarn bootstrap",
-    "bootstrap": "yarn pre-bootstrap && lerna bootstrap",
-    "pre-bootstrap": "run-p pre-bootstrap:*",
-    "pre-bootstrap:pkglock": "rimraf ./packages/*/package-lock.json",
-    "pre-bootstrap:node_modules": "rimraf ./packages/*/node_modules",
-    "pack": "lerna exec -- npm pack"
+    "fix": "lerna run fix",
+    "pack": "lerna exec -- yarn pack",
+    "version": "lerna version --no-git-tag-version --no-changelog --yes --yes",
+    "release": "lerna publish from-package --no-git-reset --yes"
   },
   "devDependencies": {
     "@types/node": "^13.7.7",
@@ -26,6 +21,7 @@
     "@typescript-eslint/parser": "^2.0.0",
     "allure-commandline": "^2.13.0",
     "eslint": "^6.5.1",
+    "eslint-config-prettier": "^6.11.0",
     "lerna": "^3.20.2",
     "npm-run-all": "^4.1.5",
     "nyc": "^15.0.0",

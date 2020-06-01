@@ -1,4 +1,4 @@
-export { JasmineAllureReporter } from "./src/JasmineAllureReporter";
+export { JasmineAllureReporter, JasmineAllureInterface } from "./src/JasmineAllureReporter";
 export { JasmineConsoleReporter } from "./src/JasmineConsoleReporter";
 export {
   AllureRuntime,

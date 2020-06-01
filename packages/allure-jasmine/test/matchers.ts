@@ -27,7 +27,7 @@ const compare: (actual: any, expected: any) => boolean = (actual, expected) => {
     return Object.keys(expected).every(key => key in actual && compare(actual[key], expected[key]));
   }
 
-  if (expected instanceof RegExp) {
+  if (expected instanceof RegExp && actual.match) {
     return !!actual.match(expected);
   }
 

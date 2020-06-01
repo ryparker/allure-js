@@ -12,10 +12,10 @@ import {
   Stage,
   Status,
   StepInterface,
-  isPromise
+  isPromise,
 } from "allure-js-commons";
 
-import stripAnsi from 'strip-ansi'
+import stripAnsi from "strip-ansi";
 
 import FailedExpectation = jasmine.FailedExpectation;
 
@@ -25,7 +25,8 @@ enum SpecStatus {
   BROKEN = "broken",
   PENDING = "pending",
   DISABLED = "disabled",
-  EXCLUDED = "excluded"
+  EXCLUDED = "excluded",
+  TODO = "todo",
 }
 
 type JasmineBeforeAfterFn = (action: (done: DoneFn) => void, timeout?: number) => void;
@@ -35,6 +36,7 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
   private labelStack: Label[][] = [[]];
   private runningTest: AllureTest | null = null;
   private stepStack: AllureStep[] = [];
+  private consoleLogs: String[] = []
   private runningExecutable: ExecutableItemWrapper | null = null;
   private readonly runtime: AllureRuntime;
 
@@ -54,7 +56,7 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     return currentGroup;
   }
 
-  getInterface(): Allure {
+  getInterface(): JasmineAllureInterface {
     return new JasmineAllureInterface(this, this.runtime);
   }
 
@@ -72,10 +74,27 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     return this.runtime.writeAttachment(content, type);
   }
 
-  jasmineStarted(suiteInfo: jasmine.SuiteInfo): void {
+  jasmineStarted(suiteInfo: jasmine.SuiteInfo): void {}
+
+  console(error: Error, args: {level?: string, messages?: string}) {
+    if (error) {
+      return;
+    }
+    if (args.level) {
+      this.consoleLogs = this.consoleLogs || [];
+      this.consoleLogs.push(`level: ${args.level}, messages: ${args.messages}`);
+    }
+  }
+
+  attachConsoleLogs() {
+    if (this.consoleLogs.length > 0) {
+      const buf = Buffer.from(this.consoleLogs.join("\n"), "utf8");
+      this.getInterface().attachment("Console Logs", buf, ContentType.TEXT);
+    }
   }
 
   suiteStarted(suite: jasmine.CustomReporterResult): void {
+    console.log("SUITE FULLNAME", suite.fullName);
     const name = suite.description;
     const group = (this.getCurrentGroup() || this.runtime).startGroup(name);
     this.groupStack.push(group);
@@ -119,10 +138,12 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
 
   specDone(spec: jasmine.CustomReporterResult): void {
     const currentTest = this.runningTest;
+
     if (currentTest === null) throw new Error("specDone while no test is running");
 
     if (this.stepStack.length > 0) {
       console.error("Allure reporter issue: step stack is not empty on specDone");
+
       for (const step of this.stepStack.reverse()) {
         step.status = Status.BROKEN;
         step.stage = Stage.INTERRUPTED;
@@ -132,8 +153,12 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
       this.stepStack = [];
     }
 
-    if (spec.status === SpecStatus.PENDING || spec.status === SpecStatus.DISABLED
-      || spec.status === SpecStatus.EXCLUDED) {
+    if (
+      spec.status === SpecStatus.PENDING ||
+      spec.status === SpecStatus.DISABLED ||
+      spec.status === SpecStatus.EXCLUDED ||
+      spec.status === SpecStatus.TODO
+    ) {
       currentTest.status = Status.SKIPPED;
       currentTest.stage = Stage.PENDING;
       currentTest.detailsMessage = spec.pendingReason || "Suite disabled";
@@ -149,11 +174,25 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
       currentTest.status = Status.FAILED;
     }
 
-    const exceptionInfo = this.findMessageAboutThrow(spec.failedExpectations)
-      || this.findAnyError(spec.failedExpectations);
+    const exceptionInfo =
+      this.findMessageAboutThrow(spec.failedExpectations) || this.findAnyError(spec.failedExpectations);
+
     if (exceptionInfo !== null) {
-      currentTest.detailsMessage = stripAnsi(exceptionInfo.message);
-      currentTest.detailsTrace = stripAnsi(exceptionInfo.stack);
+      if (exceptionInfo.message && typeof exceptionInfo.message === "string") {
+        let { message } = exceptionInfo;
+        message = stripAnsi(message);
+
+        currentTest.detailsMessage = message;
+
+        if (exceptionInfo.stack && typeof exceptionInfo.stack === "string") {
+          let { stack } = exceptionInfo;
+          stack = stripAnsi(stack);
+
+          stack = stack.replace(message, "");
+
+          currentTest.detailsTrace = stack;
+        }
+      }
     }
 
     currentTest.endTest();
@@ -197,6 +236,7 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     }
   }
 
+
   pushStep(step: AllureStep): void {
     this.stepStack.push(step);
   }
@@ -222,23 +262,29 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
         wrapped(function(done) {
           reporter.runningExecutable = fun();
           let ret;
-          if (action.length > 0) { // function takes done callback
-            ret = reporter.runningExecutable.wrap(() => new Promise((resolve, reject) => {
-              const t: any = resolve;
-              t.fail = reject;
-              action(t);
-            }))();
+          if (action.length > 0) {
+            // function takes done callback
+            ret = reporter.runningExecutable.wrap(
+              () =>
+                new Promise((resolve, reject) => {
+                  const t: any = resolve;
+                  t.fail = reject;
+                  action(t);
+                })
+            )();
           } else {
             ret = reporter.runningExecutable.wrap(action)();
           }
           if (isPromise(ret)) {
-            (ret as Promise<any>).then(() => {
-              reporter.runningExecutable = null;
-              done();
-            }).catch(e => {
-              reporter.runningExecutable = null;
-              done.fail(e);
-            });
+            (ret as Promise<any>)
+              .then(() => {
+                reporter.runningExecutable = null;
+                done();
+              })
+              .catch(e => {
+                reporter.runningExecutable = null;
+                done.fail(e);
+              });
           } else {
             reporter.runningExecutable = null;
             done();
@@ -247,14 +293,10 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
       };
     }
 
-    const wrapperBeforeAll =
-      makeWrapperAll(jasmineBeforeAll, () => reporter.currentGroup.addBefore());
-    const wrapperAfterAll =
-      makeWrapperAll(jasmineAfterAll, () => reporter.currentGroup.addAfter());
-    const wrapperBeforeEach =
-      makeWrapperAll(jasmineBeforeEach, () => reporter.currentGroup.addBefore());
-    const wrapperAfterEach =
-      makeWrapperAll(jasmineAfterEach, () => reporter.currentGroup.addAfter());
+    const wrapperBeforeAll = makeWrapperAll(jasmineBeforeAll, () => reporter.currentGroup.addBefore());
+    const wrapperAfterAll = makeWrapperAll(jasmineAfterAll, () => reporter.currentGroup.addAfter());
+    const wrapperBeforeEach = makeWrapperAll(jasmineBeforeEach, () => reporter.currentGroup.addBefore());
+    const wrapperAfterEach = makeWrapperAll(jasmineAfterEach, () => reporter.currentGroup.addAfter());
 
     eval("global.beforeAll = wrapperBeforeAll;");
     eval("global.afterAll = wrapperAfterAll;");
@@ -293,34 +335,36 @@ export class JasmineAllureInterface extends Allure {
   step<T>(name: string, body: (step: StepInterface) => any): any {
     const wrappedStep = this.startStep(name);
     let result;
+
     try {
       result = wrappedStep.run(body);
-      console.log(result);
     } catch (err) {
-      console.log(err);
       wrappedStep.endStep();
       throw err;
     }
+
     if (isPromise(result)) {
       const promise = result as Promise<any>;
-      return promise.then(a => {
-        console.log(a);
-        wrappedStep.endStep();
-        return a;
-      }).catch(e => {
-        console.log(e);
-        wrappedStep.endStep();
-        throw e;
-      });
-    } else {
+      return promise
+        .then(a => {
+          wrappedStep.endStep();
+          return a;
+        })
+        .catch(e => {
+          wrappedStep.endStep();
+          throw e;
+        });
+    }
+    if (!isPromise(result)) {
       wrappedStep.endStep();
       return result;
     }
   }
 
-  logStep(name: string, status?: Status): void {
-    console.log(status);
-    this.step(name, () => {}); // todo status
+  logStep(name: string, status: Status): void {
+    const wrappedStep = this.startStep(name);
+    wrappedStep.logStep(status);
+    wrappedStep.endStep();
   }
 
   attachment(name: string, content: Buffer | string, type: ContentType) {
@@ -329,10 +373,8 @@ export class JasmineAllureInterface extends Allure {
   }
 }
 
-class WrappedStep { // needed?
-  constructor(private readonly reporter: JasmineAllureReporter,
-              private readonly step: AllureStep) {
-  }
+class WrappedStep {
+  constructor(private readonly reporter: JasmineAllureReporter, private readonly step: AllureStep) {}
 
   startStep(name: string): WrappedStep {
     const step = this.step.startStep(name);
@@ -343,6 +385,10 @@ class WrappedStep { // needed?
   endStep(): void {
     this.reporter.popStep();
     this.step.endStep();
+  }
+
+  logStep(status: Status): void {
+    return this.step.logStep(status);
   }
 
   run<T>(body: (step: StepInterface) => T): T {

@@ -1,20 +1,11 @@
-import {
-  ContentType,
-  FixtureResult,
-  Stage,
-  Status,
-  StatusDetails,
-  StepResult,
-  TestResult
-} from "./model";
+import { ContentType, FixtureResult, Stage, Status, StatusDetails, StepResult, TestResult } from "./model";
 
 import { isPromise } from "./isPromise";
 import { stepResult } from "./constructors";
 import stripAnsi from "strip-ansi";
 
 export class ExecutableItemWrapper {
-  constructor(private readonly info: FixtureResult | TestResult) {
-  }
+  constructor(private readonly info: FixtureResult | TestResult) {}
 
   protected get wrappedItem(): FixtureResult | TestResult {
     return this.info;
@@ -45,11 +36,11 @@ export class ExecutableItemWrapper {
   }
 
   public set detailsMessage(message: string) {
-    this.info.statusDetails.message = stripAnsi(message);
+    this.info.statusDetails.message = message;
   }
 
   public set detailsTrace(trace: string) {
-    this.info.statusDetails.trace = stripAnsi(trace);
+    this.info.statusDetails.trace = trace;
   }
 
   public set stage(stage: Stage) {
@@ -74,39 +65,78 @@ export class ExecutableItemWrapper {
     return allureStep;
   }
 
+  public logStep(status: Status) {
+    this.stage = Stage.FINISHED;
+    this.status = status;
+  }
+
   public wrap<T>(fun: (...args: any[]) => any) {
     return (...args: any[]) => {
+      console.log("js-commons this.status:", this.status);
+
       this.stage = Stage.RUNNING;
       let result;
+
       try {
         result = fun(args);
       } catch (error) {
-        this.stage = Stage.INTERRUPTED; // fixme is this right for exception?
-        this.status = Status.BROKEN;
-        if (error) {
-          this.detailsMessage = (error as Error).message || "";
-          this.detailsTrace = (error as Error).stack || "";
+        if (error.stack || error.message) {
+          if (error.stack && error.message) {
+            this.status = Status.FAILED;
+            this.stage = Stage.FINISHED;
+
+            const { message, stack } = error as Error;
+
+            this.detailsMessage = message || "";
+            this.detailsTrace = stack || "";
+
+            if (this.detailsTrace) {
+              this.detailsTrace = this.detailsTrace.replace(this.detailsMessage, "");
+            }
+          }
+
+          result = error;
         }
-        throw error;
       }
+
       if (isPromise(result)) {
         const promise = result as Promise<any>;
-        return promise.then(res => {
-          this.status = Status.PASSED;
-          this.stage = Stage.FINISHED;
-          return res;
-        }).catch(error => {
-          this.stage = Stage.INTERRUPTED; // fixme is this right for exception?
-          this.status = Status.BROKEN;
-          if (error) {
-            this.detailsMessage = (error as Error).message || "";
-            this.detailsTrace = (error as Error).stack || "";
-          }
-          throw error;
-        });
+        return promise
+          .then(res => {
+            if (!this.status) this.status = Status.PASSED;
+
+            this.stage = Stage.FINISHED;
+
+            return res;
+          })
+          .catch(error => {
+            this.stage = Stage.INTERRUPTED;
+
+            if (!this.status) this.status = Status.BROKEN;
+
+            if (error) {
+              if (error.stack && error.message) {
+                this.status = Status.FAILED;
+                this.stage = Stage.FINISHED;
+
+                const { message, stack } = error as Error;
+
+                this.detailsMessage = message || "";
+                this.detailsTrace = stack || "";
+
+                if (this.detailsTrace) {
+                  this.detailsTrace = this.detailsTrace.replace(this.detailsMessage, "");
+                }
+              }
+            }
+
+            result = error;
+          });
       } else {
-        this.status = Status.PASSED;
+        if (!this.status) this.status = Status.PASSED;
+
         this.stage = Stage.FINISHED;
+
         return result;
       }
     };
