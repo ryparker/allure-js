@@ -2,7 +2,8 @@ import { ContentType, FixtureResult, Stage, Status, StatusDetails, StepResult, T
 
 import { isPromise } from "./isPromise";
 import { stepResult } from "./constructors";
-import stripAnsi from "strip-ansi";
+
+// import stripAnsi from "strip-ansi";
 
 export class ExecutableItemWrapper {
   constructor(private readonly info: FixtureResult | TestResult) {}
@@ -72,8 +73,6 @@ export class ExecutableItemWrapper {
 
   public wrap<T>(fun: (...args: any[]) => any) {
     return (...args: any[]) => {
-      console.log("js-commons this.status:", this.status);
-
       this.stage = Stage.RUNNING;
       let result;
 
