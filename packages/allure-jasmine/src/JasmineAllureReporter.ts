@@ -15,6 +15,7 @@ import {
   isPromise,
 } from "allure-js-commons";
 
+import path from "path";
 import stripAnsi from "strip-ansi";
 
 import FailedExpectation = jasmine.FailedExpectation;
@@ -29,18 +30,31 @@ enum SpecStatus {
   TODO = "todo",
 }
 
+export type Attachment = {
+  name: string;
+  content: Buffer | string;
+  type: ContentType;
+};
+
+export interface JAllureConfig extends IAllureConfig {
+  projectDir?: string;
+}
+
 type JasmineBeforeAfterFn = (action: (done: DoneFn) => void, timeout?: number) => void;
 
 export class JasmineAllureReporter implements jasmine.CustomReporter {
+  private config: JAllureConfig;
   private groupStack: AllureGroup[] = [];
   private labelStack: Label[][] = [[]];
   private runningTest: AllureTest | null = null;
   private stepStack: AllureStep[] = [];
-  private consoleLogs: String[] = []
-  private runningExecutable: ExecutableItemWrapper | null = null;
+  public runningExecutable: ExecutableItemWrapper | null = null;
+  private isSuite: Boolean = false;
+
   private readonly runtime: AllureRuntime;
 
-  constructor(config: IAllureConfig) {
+  constructor(config: JAllureConfig) {
+    this.config = config;
     this.runtime = new AllureRuntime(config);
     this.installHooks();
   }
@@ -66,7 +80,6 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
   }
 
   get currentExecutable(): ExecutableItemWrapper | null {
-    //if (this.runningExecutable === null) throw new Error("No active executable");
     return this.runningExecutable;
   }
 
@@ -74,61 +87,94 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     return this.runtime.writeAttachment(content, type);
   }
 
-  jasmineStarted(suiteInfo: jasmine.SuiteInfo): void {}
-
-  console(error: Error, args: {level?: string, messages?: string}) {
-    if (error) {
-      return;
-    }
-    if (args.level) {
-      this.consoleLogs = this.consoleLogs || [];
-      this.consoleLogs.push(`level: ${args.level}, messages: ${args.messages}`);
-    }
-  }
-
-  attachConsoleLogs() {
-    if (this.consoleLogs.length > 0) {
-      const buf = Buffer.from(this.consoleLogs.join("\n"), "utf8");
-      this.getInterface().attachment("Console Logs", buf, ContentType.TEXT);
-    }
+  jasmineStarted(suiteInfo: jasmine.SuiteInfo): void {
+    console.log(`Jest Worker #${process.env.JEST_WORKER_ID} has started.`);
   }
 
   suiteStarted(suite: jasmine.CustomReporterResult): void {
-    console.log("SUITE FULLNAME", suite.fullName);
+    // suiteStarted is only triggered when a test is nested in a describe block
+    this.isSuite = true;
+
+    // Group all specs of describe block together using wrapper.
     const name = suite.description;
     const group = (this.getCurrentGroup() || this.runtime).startGroup(name);
+
     this.groupStack.push(group);
     this.labelStack.push([]);
   }
 
   specStarted(spec: jasmine.CustomReporterResult): void {
+    let specPathArr = [];
+
+    // Special behavior if test is not using describe blocks
+    if (!this.isSuite) {
+      const { projectDir } = this.config;
+      const { testPath } = spec as any;
+
+      specPathArr = projectDir ? path.relative(projectDir, testPath).split("/") : testPath.split("/");
+
+      if (specPathArr.length > 0) {
+        const group = (this.getCurrentGroup() || this.runtime).startGroup(specPathArr[0]);
+        this.groupStack.push(group);
+        this.labelStack.push([]);
+      }
+    }
+
+    // Checking current context
     let currentGroup = this.getCurrentGroup();
     if (currentGroup === null) throw new Error("No active suite");
 
-    currentGroup = currentGroup.startGroup("Test wrapper"); // needed to hold beforeEach/AfterEach
+    // Wrapper to hold beforeEach/afterEach
+    currentGroup = currentGroup.startGroup("Test wrapper");
     this.groupStack.push(currentGroup);
 
-    const name = spec.description;
-    const allureTest = currentGroup.startTest(name);
+    // Starting test
+    const specName = spec.description;
+    const allureTest = currentGroup.startTest(specName);
+
+    // Check context for invalid state
     if (this.runningTest != null) throw new Error("Test is starting before other ended!");
+
+    // Set context state
     this.runningTest = allureTest;
 
     allureTest.fullName = spec.fullName;
     allureTest.historyId = spec.fullName;
     allureTest.stage = Stage.RUNNING;
 
-    // ignore wrapper, index + 1
-    if (this.groupStack.length > 1) {
-      allureTest.addLabel(LabelName.PARENT_SUITE, this.groupStack[0].name);
+    // If describe blocks are being used, then use describe block names for report organization.
+    if (this.isSuite) {
+      if (this.groupStack.length > 1) {
+        allureTest.addLabel(LabelName.PARENT_SUITE, this.groupStack[0].name);
+      }
+      if (this.groupStack.length > 2) {
+        allureTest.addLabel(LabelName.SUITE, this.groupStack[1].name);
+      }
+      if (this.groupStack.length > 3) {
+        allureTest.addLabel(LabelName.SUB_SUITE, this.groupStack[2].name);
+      }
     }
-    if (this.groupStack.length > 2) {
-      allureTest.addLabel(LabelName.SUITE, this.groupStack[1].name);
-    }
-    if (this.groupStack.length > 3) {
-      allureTest.addLabel(LabelName.SUB_SUITE, this.groupStack[2].name);
-    }
-    // TODO: if more depth add something to test name
 
+    // If test is not using describe blocks, then use file path for report organization.
+    // Note: ignore the beforeEach/afterEach wrapper, index + 1
+    if (!this.isSuite && specPathArr.length > 1) {
+      // Lowest level is the test file name (ie: functionality.test.js)
+      allureTest.addLabel(LabelName.SUB_SUITE, specPathArr[specPathArr.length - 1]);
+
+      // Next level is the test file's dir name (ie: POST/GET/PUT/DELETE)
+      allureTest.addLabel(LabelName.SUITE, specPathArr[specPathArr.length - 2]);
+
+      // Top level is the rest of the file path (ie: user/info)
+      allureTest.addLabel(LabelName.PARENT_SUITE, specPathArr.slice(0, specPathArr.length - 2).join("/"));
+
+      // Packages tab should be organized by root folder of file path. (ie: user)
+      allureTest.addLabel(LabelName.PACKAGE, specPathArr[0]);
+    }
+
+    // Capture Jest worker thread for timeline report
+    if (process.env.JEST_WORKER_ID) this.addLabel(LabelName.THREAD, `${process.env.JEST_WORKER_ID}`);
+
+    // Recursively add labels to the test instance
     for (const labels of this.labelStack) {
       for (const label of labels) {
         allureTest.addLabel(label.name, label.value);
@@ -137,20 +183,37 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
   }
 
   specDone(spec: jasmine.CustomReporterResult): void {
+    if (this.runningTest === null) throw new Error("specDone while no test is running");
+
     const currentTest = this.runningTest;
 
-    if (currentTest === null) throw new Error("specDone while no test is running");
-
+    // If steps were not finished before the spec finished, then notify and clear stepStack.
     if (this.stepStack.length > 0) {
       console.error("Allure reporter issue: step stack is not empty on specDone");
 
       for (const step of this.stepStack.reverse()) {
         step.status = Status.BROKEN;
         step.stage = Stage.INTERRUPTED;
-        step.detailsMessage = "Timeout";
+        step.detailsMessage = "Test ended unexpectedly before step could complete.";
         step.endStep();
       }
       this.stepStack = [];
+    }
+
+    // Capture test result/status
+    if (spec.status === SpecStatus.PASSED) {
+      currentTest.status = Status.PASSED;
+      currentTest.stage = Stage.FINISHED;
+    }
+
+    if (spec.status === SpecStatus.BROKEN) {
+      currentTest.status = Status.BROKEN;
+      currentTest.stage = Stage.FINISHED;
+    }
+
+    if (spec.status === SpecStatus.FAILED) {
+      currentTest.status = Status.FAILED;
+      currentTest.stage = Stage.FINISHED;
     }
 
     if (
@@ -163,59 +226,65 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
       currentTest.stage = Stage.PENDING;
       currentTest.detailsMessage = spec.pendingReason || "Suite disabled";
     }
-    currentTest.stage = Stage.FINISHED;
-    if (spec.status === SpecStatus.PASSED) {
-      currentTest.status = Status.PASSED;
-    }
-    if (spec.status === SpecStatus.BROKEN) {
-      currentTest.status = Status.BROKEN;
-    }
-    if (spec.status === SpecStatus.FAILED) {
-      currentTest.status = Status.FAILED;
-    }
 
+    // Capture exceptions
     const exceptionInfo =
       this.findMessageAboutThrow(spec.failedExpectations) || this.findAnyError(spec.failedExpectations);
 
-    if (exceptionInfo !== null) {
-      if (exceptionInfo.message && typeof exceptionInfo.message === "string") {
-        let { message } = exceptionInfo;
-        message = stripAnsi(message);
+    if (exceptionInfo !== null && typeof exceptionInfo.message === "string") {
+      let { message } = exceptionInfo;
 
-        currentTest.detailsMessage = message;
+      message = stripAnsi(message);
 
-        if (exceptionInfo.stack && typeof exceptionInfo.stack === "string") {
-          let { stack } = exceptionInfo;
-          stack = stripAnsi(stack);
+      currentTest.detailsMessage = message;
 
-          stack = stack.replace(message, "");
+      if (exceptionInfo.stack && typeof exceptionInfo.stack === "string") {
+        let { stack } = exceptionInfo;
 
-          currentTest.detailsTrace = stack;
-        }
+        stack = stripAnsi(stack);
+        stack = stack.replace(message, "");
+
+        currentTest.detailsTrace = stack;
       }
     }
 
+    // Finished with test
     currentTest.endTest();
     this.runningTest = null;
 
-    this.currentGroup.endGroup(); // popping the test wrapper
+    // Popping test wrapper
+    this.currentGroup.endGroup();
     this.groupStack.pop();
+
+    // If test was not in a describe block, end the group wrapper
+    if (!this.isSuite) {
+      const currentGroup = this.getCurrentGroup();
+
+      if (currentGroup === null) throw new Error("No active suite");
+
+      currentGroup.endGroup();
+      this.groupStack.pop();
+      this.labelStack.pop();
+    }
   }
 
   suiteDone(suite: jasmine.CustomReporterResult): void {
-    if (this.runningTest !== null) {
-      console.error("Allure reporter issue: running test on suiteDone");
-    }
+    if (!this.isSuite) console.error("Allure reporter issue: suiteDone called without suiteStart context.");
+
+    if (this.runningTest !== null) console.error("Allure reporter issue: A test was running on suiteDone.");
 
     const currentGroup = this.getCurrentGroup();
-    if (currentGroup === null) throw new Error("No active suite");
+
+    if (currentGroup === null) throw new Error("No active suite.");
 
     currentGroup.endGroup();
     this.groupStack.pop();
     this.labelStack.pop();
   }
 
-  jasmineDone(runDetails: jasmine.RunDetails): void {}
+  jasmineDone(runDetails: jasmine.RunDetails): void {
+    console.log(`Jest Worker #${process.env.JEST_WORKER_ID} has finished.`);
+  }
 
   private findMessageAboutThrow(expectations?: FailedExpectation[]): FailedExpectation | null {
     for (const e of expectations || []) {
@@ -236,7 +305,6 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     }
   }
 
-
   pushStep(step: AllureStep): void {
     this.stepStack.push(step);
   }
@@ -250,6 +318,8 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     return null;
   }
 
+  // TODO: Add support for manually adding setup execution steps.
+
   private installHooks() {
     const reporter = this;
     const jasmineBeforeAll: JasmineBeforeAfterFn = eval("global.beforeAll");
@@ -258,8 +328,8 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
     const jasmineAfterEach: JasmineBeforeAfterFn = eval("global.afterEach");
 
     function makeWrapperAll(wrapped: JasmineBeforeAfterFn, fun: () => ExecutableItemWrapper) {
-      return function(action: (done: DoneFn) => void, timeout?: number): void {
-        wrapped(function(done) {
+      return function (action: (done: DoneFn) => void, timeout?: number): void {
+        wrapped(function (done) {
           reporter.runningExecutable = fun();
           let ret;
           if (action.length > 0) {
@@ -281,7 +351,7 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
                 reporter.runningExecutable = null;
                 done();
               })
-              .catch(e => {
+              .catch((e) => {
                 reporter.runningExecutable = null;
                 done.fail(e);
               });
@@ -292,7 +362,6 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
         }, timeout);
       };
     }
-
     const wrapperBeforeAll = makeWrapperAll(jasmineBeforeAll, () => reporter.currentGroup.addBefore());
     const wrapperAfterAll = makeWrapperAll(jasmineAfterAll, () => reporter.currentGroup.addAfter());
     const wrapperBeforeEach = makeWrapperAll(jasmineBeforeEach, () => reporter.currentGroup.addBefore());
@@ -305,17 +374,18 @@ export class JasmineAllureReporter implements jasmine.CustomReporter {
   }
 }
 
+//TODO: Move this to it's own file
 export class JasmineAllureInterface extends Allure {
   constructor(private readonly reporter: JasmineAllureReporter, runtime: AllureRuntime) {
     super(runtime);
   }
 
-  public label(name: string, value: string): void {
-    try {
-      this.reporter.currentTest.addLabel(name, value);
-    } catch {
-      this.reporter.addLabel(name, value);
-    }
+  private startStep(name: string): WrappedStep {
+    const allureStep: AllureStep = this.currentExecutable.startStep(name);
+
+    this.reporter.pushStep(allureStep);
+
+    return new WrappedStep(this.reporter, allureStep);
   }
 
   protected get currentExecutable(): ExecutableItemWrapper {
@@ -326,13 +396,31 @@ export class JasmineAllureInterface extends Allure {
     return this.reporter.currentTest;
   }
 
-  private startStep(name: string): WrappedStep {
-    const allureStep: AllureStep = this.currentExecutable.startStep(name);
-    this.reporter.pushStep(allureStep);
-    return new WrappedStep(this.reporter, allureStep);
+  public setup<T>(body: () => any): any {
+    this.reporter.runningExecutable = this.reporter.currentGroup.addBefore();
+
+    const result = this.reporter.runningExecutable.wrap(body)();
+
+    if (isPromise(result)) {
+      const promise = result as Promise<any>;
+      return promise
+        .then((a) => {
+          this.reporter.runningExecutable = null;
+          return a;
+        })
+        .catch((e) => {
+          this.reporter.runningExecutable = null;
+          throw e;
+        });
+    }
+
+    if (!isPromise(result)) {
+      this.reporter.runningExecutable = null;
+      return result;
+    }
   }
 
-  step<T>(name: string, body: (step: StepInterface) => any): any {
+  public step<T>(name: string, body: (step: StepInterface) => any): any {
     const wrappedStep = this.startStep(name);
     let result;
 
@@ -346,33 +434,55 @@ export class JasmineAllureInterface extends Allure {
     if (isPromise(result)) {
       const promise = result as Promise<any>;
       return promise
-        .then(a => {
+        .then((a) => {
           wrappedStep.endStep();
           return a;
         })
-        .catch(e => {
+        .catch((e) => {
           wrappedStep.endStep();
           throw e;
         });
     }
+
     if (!isPromise(result)) {
       wrappedStep.endStep();
       return result;
     }
   }
 
-  logStep(name: string, status: Status): void {
+  public logStep(name: string, status: Status, attachments?: [Attachment]): void {
     const wrappedStep = this.startStep(name);
+
+    if (attachments) {
+      for (const { name, content, type } of attachments) {
+        this.attachment(name, content, type);
+      }
+    }
+
     wrappedStep.logStep(status);
     wrappedStep.endStep();
   }
 
-  attachment(name: string, content: Buffer | string, type: ContentType) {
+  public attachment(name: string, content: Buffer | string, type: ContentType) {
     const file = this.reporter.writeAttachment(content, type);
+
     this.currentExecutable.addAttachment(name, type, file);
+  }
+
+  // public parameter(name: string, value: string): void {
+  //   this.label(name, value);
+  // }
+
+  public label(name: string, value: string): void {
+    try {
+      this.reporter.currentTest.addLabel(name, value);
+    } catch {
+      this.reporter.addLabel(name, value);
+    }
   }
 }
 
+//TODO: Move this to it's own file
 class WrappedStep {
   constructor(private readonly reporter: JasmineAllureReporter, private readonly step: AllureStep) {}
 
@@ -382,9 +492,13 @@ class WrappedStep {
     return new WrappedStep(this.reporter, step);
   }
 
-  endStep(): void {
-    this.reporter.popStep();
-    this.step.endStep();
+  attach(name: string, content: Buffer | string, type: ContentType): void {
+    const file = this.reporter.writeAttachment(content, type);
+    this.step.addAttachment(name, type, file);
+  }
+
+  param(name: string, value: string): void {
+    this.step.addParameter(name, value);
   }
 
   logStep(status: Status): void {
@@ -393,5 +507,10 @@ class WrappedStep {
 
   run<T>(body: (step: StepInterface) => T): T {
     return this.step.wrap(body)();
+  }
+
+  endStep(): void {
+    this.reporter.popStep();
+    this.step.endStep();
   }
 }

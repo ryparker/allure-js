@@ -4,7 +4,6 @@ export class JasmineConsoleReporter implements jasmine.CustomReporter {
   }
 
   suiteStarted(suite: jasmine.CustomReporterResult) {
-    this.log(`Suite started: ${suite.fullName}`);
   }
 
   suiteDone() {

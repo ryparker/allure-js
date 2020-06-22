@@ -3,8 +3,6 @@ import { ContentType, FixtureResult, Stage, Status, StatusDetails, StepResult, T
 import { isPromise } from "./isPromise";
 import { stepResult } from "./constructors";
 
-// import stripAnsi from "strip-ansi";
-
 export class ExecutableItemWrapper {
   constructor(private readonly info: FixtureResult | TestResult) {}
 
@@ -53,16 +51,17 @@ export class ExecutableItemWrapper {
   }
 
   public addAttachment(name: string, type: ContentType, fileName: string) {
-    // eslint-disable-next-line object-shorthand
     this.info.attachments.push({ name, type, source: fileName });
   }
 
   public startStep(name: string): AllureStep {
     const result = stepResult();
+
     this.info.steps.push(result);
 
     const allureStep = new AllureStep(result);
     allureStep.name = name;
+
     return allureStep;
   }
 
@@ -74,6 +73,7 @@ export class ExecutableItemWrapper {
   public wrap<T>(fun: (...args: any[]) => any) {
     return (...args: any[]) => {
       this.stage = Stage.RUNNING;
+
       let result;
 
       try {
